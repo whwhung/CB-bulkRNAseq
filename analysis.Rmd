@@ -3,11 +3,47 @@ title: "CB vs APB Bulk RNAseq"
 output: html_notebook
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
-
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+First install our packages.
 
 ```{r}
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install("DESeq2")
+BiocManager::install("apeglm")
+BiocManager::install("IHW")
+BiocManager::install("EnsDb.Hsapiens.v79")
+install.packages("reshape2")
+install.packages("RColorBrewer")
+install.packages("pheatmap")
+install.packages("stringr")
+install.packages("dplyr")
+BiocManager::install("ComplexHeatmap")
+
+library(edgeR)
+library(stringr)
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+library(tidyverse)
+library(cowplot)
+library(extrafont)
+library(ggalt)
+library(ggforce)
+library(DESeq2)
+library('biomaRt')
+library(dplyr)
+library(apeglm)
+library("reshape2")
+library(stringr)
+library(ComplexHeatmap)
+
+```
+
+Clean the raw counts data by removing unwanted donors (AS, FS, PS), as well as sex genes (ChX, ChY). Make sure that whatever we keep match with meta data 
+```{r}
+adjusted_counts <- read.csv("adjusted_counts.csv")
+meta <- read.csv("meta.csv")
 
 ```
 
