@@ -37,13 +37,83 @@ library(apeglm)
 library("reshape2")
 library(stringr)
 library(ComplexHeatmap)
+library(pheatmap)
+library(RColorBrewer)
 
 ```
 
-Clean the raw counts data by removing unwanted donors (AS, FS, PS), as well as sex genes (ChX, ChY). Make sure that whatever we keep match with meta data 
+Load raw counts and meta data files.
 ```{r}
 adjusted_counts <- read.csv("adjusted_counts.csv")
 meta <- read.csv("meta.csv")
+
+```
+
+
+Clean the raw counts data by removing unwanted donors (AS, FS, PS).*Potentially need to go back and remove ChrX and ChrY sex genes. Make sure that whatever we keep match with meta data
+```{r}
+drop.cols <- c("AS", "PS", "FS")
+adjusted_counts_fltrd = adjusted_counts %>% data.frame() %>% dplyr::select(!(contains(drop.cols)))  
+
+counts.df <- adjusted_counts_fltrd[ -c(1) ] #remove first column with ensembl ID
+meta_fltrd = meta[ match( colnames(counts.df), meta$sample ) , ]
+
+```
+
+
+Run DeSeq on the counts data matrix. Note the column names of countData need to match those of colData and the # of columns in CountData need = # of rows in colData, which is why I removed the Ensembl ID column.
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = counts.df, 
+                              colData = meta_fltrd,
+                              design = ~group)
+```
+
+Visualize the library reads by plotting total reads per sample and count distributions.
+```{r}
+#total number of reads per sample 
+read.sums <- as.matrix(round(colSums(assay(dds))/10^6)) 
+read.sums<- t(read.sums)
+barplot(read.sums, xlab="ID", ylab="Millions of Reads", names.arg = c(colnames(read.sums)), col="blue")
+
+#count distribution
+boxplot(log10(assay(dds)))
+```
+
+Normalize count distribution using variance stabilization and subsequently compare the count distribution post normalization
+```{r}
+vsd <- vst(dds,blind=TRUE)
+boxplot(assay(vsd), xlab="", ylab="Log2 counts per million",las=2,main="Normalized Distributions")
+abline(h=median(assay(vsd)), col="blue") #adding median line
+
+```
+
+Mapping sample to sample distance
+```{r}
+sampleDists <- dist(t(assay(vsd)))
+sampleDistMatrix<- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- colData(dds)$sample
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+Plot PCA 
+```{r}
+pcaData <- plotPCA(vsd, intgroup=c("sample"), returnData=TRUE)
+pcaData$group <- gsub("[[:digit:]]", "", pcaData$group) #in group column remove sample number, only keep APB or CB label
+
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+ggplot(pcaData, aes(PC1, PC2, color=group, group=c(pcaData$group))) +
+  geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed() + stat_ellipse(linetype=2)
+```
+
+Differential gene expression analysis 
+```{r}
 
 ```
 
