@@ -53,33 +53,40 @@ meta <- read.csv("meta.csv")
 Clean the raw counts data by removing unwanted donors (AS, FS, PS).*Potentially need to go back and remove ChrX and ChrY sex genes. Make sure that whatever we keep match with meta data
 ```{r}
 drop.cols <- c("AS", "PS", "FS")
-adjusted_counts_fltrd = adjusted_counts %>% data.frame() %>% dplyr::select(!(contains(drop.cols)))  
+adjusted_counts_fltrd = adjusted_counts %>% data.frame() %>% dplyr::select(!(contains(drop.cols))) 
+rownames(adjusted_counts_fltrd) <- adjusted_counts_fltrd[,1]
+adjusted_counts_fltrd <- subset(adjusted_counts_fltrd[,-1]) #remove the first column with ensembl ID
+adjusted_counts_fltrd <- as.matrix(adjusted_counts_fltrd)
 
-counts.df <- adjusted_counts_fltrd[ -c(1) ] #remove first column with ensembl ID
-meta_fltrd = meta[ match( colnames(counts.df), meta$sample ) , ]
-
+meta_fltrd = meta[ match( colnames(adjusted_counts_fltrd), meta$sample ) , ]
+meta_fltrd <- meta_fltrd[,-1]
 ```
 
 
 Run DeSeq on the counts data matrix. Note the column names of countData need to match those of colData and the # of columns in CountData need = # of rows in colData, which is why I removed the Ensembl ID column.
 ```{r}
-dds <- DESeqDataSetFromMatrix(countData = counts.df, 
+dds <- DESeqDataSetFromMatrix(countData = adjusted_counts_fltrd, 
                               colData = meta_fltrd,
                               design = ~group)
 ```
 
-Visualize the library reads by plotting total reads per sample and count distributions.
+Visualize the library reads by plotting total reads per sample.
 ```{r}
 #total number of reads per sample 
 read.sums <- as.matrix(round(colSums(assay(dds))/10^6)) 
 read.sums<- t(read.sums)
 barplot(read.sums, xlab="ID", ylab="Millions of Reads", names.arg = c(colnames(read.sums)), col="blue")
+```
 
+Get an initial sense of variance across samples by plotting the count distribution. We see that the median of each sample differs across samples and outliers are driving large variance which would skew the data.
+```{r}
 #count distribution
 boxplot(log10(assay(dds)))
 ```
 
-Normalize count distribution using variance stabilization and subsequently compare the count distribution post normalization
+#Variance Stabilization
+Normalize count distribution using variance stabilization (vst) and subsequently compare the count distribution post normalization. We see that the median of each sample align with the total median and there's less variability across the count distributions among different samples.When specified blind = FALSE, it means that differences between cell lines and treatment (the variables in the design) will not contribute to the expected variance-mean trend of the experiment. The experimental design is not used directly in the transformation, only in estimating the global amount of variability in the counts. For a fully unsupervised transformation, one can set blind = TRUE (which is the default).
+
 ```{r}
 vsd <- vst(dds,blind=TRUE)
 boxplot(assay(vsd), xlab="", ylab="Log2 counts per million",las=2,main="Normalized Distributions")
@@ -87,7 +94,8 @@ abline(h=median(assay(vsd)), col="blue") #adding median line
 
 ```
 
-Mapping sample to sample distance
+#Mapping sample to sample distance:
+Generate a heatmap of sample-sample distance to look at overview of similarities/dissimilarities between samples. Hierarchical clustering done by sample distances rather than between rows/columns of the distance matrix. We see that CB samples cluster together and similarly for APB 
 ```{r}
 sampleDists <- dist(t(assay(vsd)))
 sampleDistMatrix<- as.matrix(sampleDists)
@@ -99,7 +107,7 @@ pheatmap(sampleDistMatrix,clustering_distance_rows=sampleDists,
          col=colors)
 ```
 
-Plot PCA 
+#Unsupervised clustering using PCA 
 ```{r}
 pcaData <- plotPCA(vsd, intgroup=c("sample"), returnData=TRUE)
 pcaData$group <- gsub("[[:digit:]]", "", pcaData$group) #in group column remove sample number, only keep APB or CB label
@@ -112,10 +120,189 @@ ggplot(pcaData, aes(PC1, PC2, color=group, group=c(pcaData$group))) +
   coord_fixed() + stat_ellipse(linetype=2)
 ```
 
-Differential gene expression analysis 
+##Hypothesis testing & the Multiple Testing Problem:
+Null hypothesis: LFC =0 (no differential expression across the two sample groups) 
+Note: Wald test is the default in DeSeq2 when comparing two groups. This is the model that is used to find pvalues. For >2 sample classes, can use Likelihood ratio test (LRT) 
+
+Multiple testing problem arises when we're looking at many genes & the more genes we look at, the more we inflat the false positive rate (often denoted as 5% of the total number of tests). To correct the p-value for multiple testing, there are a few common approaches (Bonferroni, FDR/Benjamini-Hochberg, Q-value/Storey method)
+
+https://hbctraining.github.io/DGE_workshop_salmon_online/lessons/05a_hypothesis_testing.html
+
+
+Run DeSeq first and we can play around with the data. Alpha = false positives (1- confidence level(usually 95%)) = 0.05. As recommended on this thread, alpha should be set to equal the FDR (aka the padj cutoff). A higher alpha makes it easier to reject the null hypothesis but the consequence is getting more false positives. We see comparing the two results that res have more significant genes (up and down by LFC) compared to res05.
+https://support.bioconductor.org/p/104618/
+
 ```{r}
+dds <- DESeq(dds)
+res<-results(dds) #alpha default =0.1
+res05 <- results(dds, alpha=0.05) #set it to a=0.05 
+```
+Compare the two thresholds:
+```{r}
+summary(res)
+sum(res$padj < 0.1, na.rm=TRUE) #5138
+summary(res05)
+sum(res05$padj < 0.05, na.rm=TRUE) #4160 
+```
+
+We get 4160 significant genes with the Wald test. A Bioconductor package IHW implements independent hypothesis weighting which is better than Benjamini and Hochberg because rather than using only p-values, it can include a designated covariate & therefore increases power by assigning data-driven weights to each hypothesis. 
+```{r}
+library("IHW")
+resIHW <- results(dds, alpha = 0.05, filterFun=ihw)
+summary(resIHW)
+sum(resIHW$padj < 0.05, na.rm=TRUE) #4433
+metadata(resIHW)$ihwResult
 
 ```
+
+#Threshold the data
+Because we're comparing two groups only, Wald test is commonly used and I will continue using the Wald test. Given that my padj cutoff will = 0.05, I will set my alpha =0.05.
+Set additional cutoffs for FC of 2 (log2FC=1)
+```{r}
+padj.cutoff <- 0.05
+lfc.cutoff <- 1 #log2FC of 1 = FC of 2
+threshold <- res05$padj < padj.cutoff & abs(res05$log2FoldChange) > lfc.cutoff
+length(which(threshold)) #2325
+res05$threshold <- threshold
+sig_res <-data.frame(subset(res05, threshold==TRUE))
+```
+
+
+#Independent filtering of results: 
+default is usign filtered_p function of the genefilter package and passed to results function. By looking at the metadata, we can find out the filter threshold value and the number of rejections at each quantile of the filter statistic. Another option is the pre-filter the data prior to running DeSeq to remove genes with low counts (<10 for bulkRNAseq)
+```{r}
+
+plot(metadata(res05)$filterNumRej, 
+     type="b", ylab="number of rejections",
+     xlab="quantiles of filter")
+lines(metadata(res05)$lo.fit, col="red")
+abline(v=metadata(res05)$filterTheta)
+
+```
+
+Map Ensembl ID in differentially expressed genes to gene Symbols 
+```{r}
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+ens <- rownames(sig_Z)
+#rownames of res contain Ensembl ID with decimal points (indicating version#); in order to map to geneID, remove anything after decimal
+ens <-sub('\\.[0-9]*$', '', ens)
+sig_res$symbol <- mapIds(org.Hs.eg.db, 
+                     keys=ens, 
+                     column=c("SYMBOL"), 
+                     keytype="ENSEMBL",multiVals="first")
+```
+
+#Export significant DGEs for manual annotation:
+```{r}
+sig_res_ordered_FC <- sig_res[order(sig_res$log2FoldChange), ] #order by log2FC
+#omit NA:
+sig_res_ordered_FC_na <- na.omit(sig_res_ordered_FC)
+
+DEG_down <- sig_res_ordered_FC_na[1:200,] #get top 200 rows 
+DEG_up <- tail(sig_res_ordered_FC_na, n=200) #get last 200 rows 
+DEG_up <- DEG_up[order(DEG_up$log2FoldChange, decreasing = T), ] #get UP genes from greatest to lowest FC
+
+write.csv(as.data.frame(DEG_down), 
+          file="CB_APB_DEG_down_FC.csv")
+
+write.csv(as.data.frame(DEG_up), 
+          file="CB_APB_DEG_up_FC.csv")
+
+
+write.csv(as.data.frame(sig_res_ordered_FC_na), 
+          file="all_DEG_FC.csv")
+```
+
+
+#Generate Z-scores
+The scale() function in R, by default, merely [by row] centers your data (mean = 0) and transforms it to Z-scores. This just makes it easier for the human brain to interpret the heatmap colour gradients, whereby 0 is then just the mean expression, whereas, e.g., blue or yellow represent different standard deviations below and above that mean, respectively, with higher absolute number relating to higher intensity.
+```{r}
+Z <- t(scale(t(assay(vsd)))) #row-wise Z-scores 
+Z <- as.data.frame(Z)
+Z$threshold <- threshold
+sig_Z <-data.frame(subset(Z, threshold==TRUE))
+```
+
+
+#Map Ensembl ID to gene symbols in the significant Z scores (based on threshold). Further clean up the Z scores by removing NAs and duplicates from gene symbol mapping
+```{r}
+sig_Z$symbol <- mapIds(org.Hs.eg.db, 
+                     keys=ens, 
+                     column=c("SYMBOL"), 
+                     keytype="ENSEMBL",multiVals="first")
+
+sig_Z_na <- na.omit(sig_Z) #there are no NAs in sig_Z
+sig_Z_na<- sig_Z_na %>% distinct(symbol, .keep_all = TRUE) #2035 -> removed 290 duplicates
+```
+
+
+#Plot z-scores (scaled vsd) on a heatmap. Compare heatmap that used Z scores (scaling vsd) vs. Z scores (scale normalized counts)
+```{r}
+rownames(sig_Z_na) <- sig_Z_na$symbol
+Z_mat <- as.matrix(sig_Z_na[,1:10]) 
+pheatmap(Z_mat,  main = "RNAseq heatmap")
+```
+```{r}
+normalized_counts <- counts(dds, normalized=T)
+norm_OEsig <- normalized_counts[rownames(sig_res),]
+norm_OEsig <- as.data.frame(norm_OEsig)
+norm_OEsig$symbol <- mapIds(org.Hs.eg.db, 
+                     keys=ens, 
+                     column=c("SYMBOL"), 
+                     keytype="ENSEMBL",multiVals="first")
+
+norm_OEsig <- na.omit(norm_OEsig) #there are no NAs in sig_Z
+norm_OEsig<- norm_OEsig%>% distinct(symbol, .keep_all = TRUE) 
+rownames(norm_OEsig) <- norm_OEsig$symbol
+norm_OEsig.mat <- as.matrix(norm_OEsig[,1:10]) 
+pheatmap(norm_OEsig.mat, scale="row",  main = "DGE (row-based z-score)")
+
+```
+
+Note that normalized counts will be positive only and will follow a negative binomial distribution, but scaling will center the data. VST expression levels will follow a distribution more approaching normality. Visually, the heatmapt using scaled normalized counts have multiple genes that are more differentially expressed compared to the its expression in other samples of the same donor type (CV or APB) -> meaning that there's more variability within each group (?) Therefore, I will use the scaled vsd data when plotting heatmap of DGEs. 
+
+#Plot Heatmap of Zscore (scaled vsd) with annotated genes: DOWN genes
+```{r}
+up_GOI_main <- c("KLRB1", "MZB1", "CBX2", "PRL", "MEX3B", "TOX", "IRF4", "LDLR", "IKZF2", "CST7", "GZMA", "CD38", "SMC4", "IRF2", "STX3", "SLC1A5")
+down_GOI_main <- c("CD63-AS1", "ZBTB32", "NR3C2", "HLA-B", "IL12A", "OSM", "HLA-C", "CD40", "NACC2", "CNN3", "ZBTB7B", "IL18BP", "CPQ", "NFIL3", "DOCK8-AS1", "ACER1", "CD300A", "IL15RA", "IL21-AS1", "STOM")
+
+#start to create indices for genes I'd like to annotate
+labs.row <- rownames(Z_mat)
+keep_ind_down <- which(labs.row %in% down_GOI_main) 
+
+ha_down = rowAnnotation(foo = anno_mark(at = c(keep_ind_down), 
+                                   labels = down_GOI_main, labels_gp = gpar(fontsize=4)))
+
+#there can't be rownmaes in the matrix for complex heatmap
+rownames(Z_mat) = NULL
+
+ht <- Heatmap(Z_mat, name = "Z-score", cluster_rows = T, right_annotation = ha_down, column_title = "RNAseq Heatmap", 
+        show_row_dend = F, show_column_dend = F)
+
+ht = draw(ht)
+```
+#Plot Heatmap of Zscore (scaled vsd) with annotated genes: UP genes
+```{r}
+keep_ind_up <- which(labs.row %in% up_GOI_main) 
+
+ha_up = rowAnnotation(foo = anno_mark(at = c(keep_ind_up), 
+                                   labels = down_GOI_main, labels_gp = gpar(fontsize=4)))
+
+
+ht <- Heatmap(Z_mat, name = "Z-score", cluster_rows = T, right_annotation = ha_up, column_title = "RNAseq Heatmap", 
+        show_row_dend = F, show_column_dend = F)
+
+ht = draw(ht)
+```
+
+
+
+
+
+
+
+
 
 Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
 
