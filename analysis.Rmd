@@ -184,7 +184,7 @@ Map Ensembl ID in differentially expressed genes to gene Symbols
 ```{r}
 library("AnnotationDbi")
 library("org.Hs.eg.db")
-ens <- rownames(sig_Z)
+ens <- rownames(sig_res)
 #rownames of res contain Ensembl ID with decimal points (indicating version#); in order to map to geneID, remove anything after decimal
 ens <-sub('\\.[0-9]*$', '', ens)
 sig_res$symbol <- mapIds(org.Hs.eg.db, 
@@ -243,6 +243,7 @@ rownames(sig_Z_na) <- sig_Z_na$symbol
 Z_mat <- as.matrix(sig_Z_na[,1:10]) 
 pheatmap(Z_mat,  main = "RNAseq heatmap")
 ```
+Deseq uses a normalization method: median of ratios. Others like CPM, TPM, RRKM/FPKM, EdgeR's trimmed mean f M (TMM) also exist. Median of ratios method accounts for seq depth, RNA composition (but not length) in order to compare counts bw sample groups for the SAME gene.
 ```{r}
 normalized_counts <- counts(dds, normalized=T)
 norm_OEsig <- normalized_counts[rownames(sig_res),]
@@ -295,10 +296,46 @@ ht <- Heatmap(Z_mat, name = "Z-score", cluster_rows = T, right_annotation = ha_u
 
 ht = draw(ht)
 ```
+Note: before I had plotted all z-scores regardless of significance based on thresholding and the plots looked much more "mixed" whereas now there's much more segregation based on APB vs CB.
+
+##GSEA
+Create a GCT file - a file with a specific format that is suitable for running GSEA. Normalization methods need to be applied to raw counts before running GSEA such as the method included in DeSeq (median of ratios).
+
+STEP - 1 map gene IDs to ensembl rownames in normalized counts 
+```{r}
+normalized_counts <- as.data.frame(normalized_counts)
+ens_all <- rownames(normalized_counts) #ens includes only the significant genes (by thresholding)
+ens_all <-sub('\\.[0-9]*$', '', ens_all)
+
+normalized_counts$symbol <- mapIds(org.Hs.eg.db, 
+                     keys=ens_all, 
+                     column=c("SYMBOL"), 
+                     keytype="ENSEMBL",multiVals="first")
+
+#remove NA and duplicates
+normalized_counts <- na.omit(normalized_counts) 
+normalized_counts<- normalized_counts%>% distinct(symbol, .keep_all = TRUE)
+
+```
 
 
 
+STEP - 2 create the first column (=gene name) ; and second column (=gene description)
 
+```{r}
+normalized_counts$description <- rownames(normalized_counts)
+normalized_counts$gene_name <- normalized_counts$symbol
+#move gene ID column to the first column
+normalized_counts <- normalized_counts %>% relocate(gene_name, .before = APB1)
+normalized_counts <- normalized_counts %>% relocate(description, .before = APB1)
+
+#remove the last column (Symbol)
+norm_counts <- normalized_counts[1:ncol(normalized_counts)-1]
+
+fid <- "norm_counts.gct" 
+writeLines(c("#1.2", paste(nrow(norm_counts), ncol(normalized_counts) - 2, collapse="\t")), fid, sep="\n") 
+write.table(norm_counts, file=fid, quote=FALSE, row.names=FALSE, col.names=TRUE, sep="\t", append = TRUE)
+```
 
 
 
