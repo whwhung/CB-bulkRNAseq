@@ -333,7 +333,7 @@ normalized_counts <- normalized_counts %>% relocate(description, .before = APB1)
 norm_counts <- normalized_counts[1:ncol(normalized_counts)-1]
 
 fid <- "norm_counts.gct" 
-writeLines(c("#1.2", paste(nrow(norm_counts), ncol(normalized_counts) - 2, collapse="\t")), fid, sep="\n") 
+writeLines(c("#1.2", paste(nrow(norm_counts), ncol(norm_counts) - 2, collapse="\t")), fid, sep="\n") 
 write.table(norm_counts, file=fid, quote=FALSE, row.names=FALSE, col.names=TRUE, sep="\t", append = TRUE)
 ```
 
