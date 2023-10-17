@@ -275,28 +275,49 @@ down_GOI_main <- c("CD63-AS1", "ZBTB32", "NR3C2", "HLA-B", "IL12A", "OSM", "HLA-
 
 #start to create indices for genes I'd like to annotate
 labs.row <- rownames(Z_mat)
-keep_ind_down <- which(labs.row %in% down_GOI_main) 
 
+keep_ind_down <- match(down_GOI_main, labs.row)
+
+set.seed(123)
 ha_down = rowAnnotation(foo = anno_mark(at = c(keep_ind_down), 
                                    labels = down_GOI_main, labels_gp = gpar(fontsize=4)))
 
 #there can't be rownames in the matrix for complex heatmap
-rownames(Z_mat) = NULL
+Z_mat_no_rownames <- Z_mat
 
-ht <- Heatmap(Z_mat, name = "Z-score", cluster_rows = T, right_annotation = ha_down, column_title = "RNAseq Heatmap", 
+rownames(Z_mat_no_rownames) = NULL
+
+ht <- Heatmap(Z_mat_no_rownames, name = "Z-score", cluster_rows = T, right_annotation = ha_down, column_title = "RNAseq Heatmap", 
         show_row_dend = F, show_column_dend = F)
 
 ht = draw(ht)
 ```
 #Plot Heatmap of Zscore (scaled vsd) with annotated genes: UP genes
 ```{r}
-keep_ind_up <- which(labs.row %in% up_GOI_main) 
+keep_ind_up <- match(up_GOI_main, labs.row)
 
+set.seed(123)
 ha_up = rowAnnotation(foo = anno_mark(at = c(keep_ind_up), 
                                    labels = up_GOI_main, labels_gp = gpar(fontsize=4)))
 
 
-ht <- Heatmap(Z_mat, name = "Z-score", cluster_rows = T, right_annotation = ha_up, column_title = "RNAseq Heatmap", 
+ht <- Heatmap(Z_mat_no_rownames, name = "Z-score", cluster_rows = T, right_annotation = ha_up, column_title = "RNAseq Heatmap", 
+        show_row_dend = F, show_column_dend = F)
+
+ht = draw(ht)
+```
+#Plot Heatmap of Zscore (scaled vsd) with annotated genes: ALL genes
+```{r}
+all_GOI_main <- c("KLRB1", "MZB1", "CBX2", "PRL", "MEX3B", "TOX", "IRF4", "LDLR", "IKZF2", "CST7", "GZMA", "CD38", "SMC4", "IRF2", "STX3", "SLC1A5", "ZBTB32", "HLA-B", "IL12A", "OSM", "HLA-C", "CD40", "NACC2", "ZBTB7B", "IL18BP", "CPQ","ACER1", "IL15RA", "IL21-AS1", "STOM") #manually took out some more genes 
+
+keep_ind_all <- match(all_GOI_main, labs.row)
+
+set.seed(123)
+ha_all = rowAnnotation(foo = anno_mark(at = c(keep_ind_all), 
+                                   labels = all_GOI_main, labels_gp = gpar(fontsize=4)))
+
+
+ht <- Heatmap(Z_mat_no_rownames, name = "Z-score", cluster_rows = T, right_annotation = ha_all, column_title = "RNAseq Heatmap", 
         show_row_dend = F, show_column_dend = F)
 
 ht = draw(ht)
