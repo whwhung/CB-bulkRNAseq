@@ -19,6 +19,10 @@ install.packages("pheatmap")
 install.packages("stringr")
 install.packages("dplyr")
 BiocManager::install("ComplexHeatmap")
+BiocManager::install("clusterProfiler")
+BiocManager::install("DO.db")
+BiocManager::install("enrichplot")
+
 
 library(edgeR)
 library(stringr)
@@ -39,6 +43,7 @@ library(stringr)
 library(ComplexHeatmap)
 library(pheatmap)
 library(RColorBrewer)
+library(clusterProfiler)
 
 ```
 
@@ -197,7 +202,7 @@ sig_res$symbol <- mapIds(org.Hs.eg.db,
 ```{r}
 sig_res_ordered_FC <- sig_res[order(sig_res$log2FoldChange), ] #order by log2FC
 #omit NA:
-sig_res_ordered_FC_na <- na.omit(sig_res_ordered_FC)
+sig_res_ordered_FC_na <- na.omit(sig_res_ordered_FC) #omitted 289 rows of missing annotations - this is within just the significant results!
 
 DEG_down <- sig_res_ordered_FC_na[1:200,] #get top 200 rows 
 DEG_up <- tail(sig_res_ordered_FC_na, n=200) #get last 200 rows 
@@ -261,7 +266,7 @@ pheatmap(norm_OEsig.mat, scale="row",  main = "DGE (row-based z-score)")
 
 ```
 
-Note that normalized counts will be positive only and will follow a negative binomial distribution, but scaling will center the data. VST expression levels will follow a distribution more approaching normality. Visually, the heatmapt using scaled normalized counts have multiple genes that are more differentially expressed compared to the its expression in other samples of the same donor type (CV or APB) -> meaning that there's more variability within each group (?) Therefore, I will use the scaled vsd data when plotting heatmap of DGEs. 
+Note that normalized counts will be positive only and will follow a negative binomial distribution, but scaling will center the data. VST expression levels will follow a distribution more approaching normality. Visually, the heatmap using scaled normalized counts have multiple genes that are more differentially expressed compared to the its expression in other samples of the same donor type (CV or APB) -> meaning that there's more variability within each group (?) Therefore, I will use the scaled vsd data when plotting heatmap of DGEs. 
 
 #Plot Heatmap of Zscore (scaled vsd) with annotated genes: DOWN genes
 ```{r}
@@ -301,7 +306,7 @@ Note: before I had plotted all z-scores regardless of significance based on thre
 ##GSEA
 Create a GCT file - a file with a specific format that is suitable for running GSEA. Normalization methods need to be applied to raw counts before running GSEA such as the method included in DeSeq (median of ratios).
 
-STEP - 1 map gene IDs to ensembl rownames in normalized counts 
+#STEP - 1 map gene IDs to ensembl rownames in normalized counts 
 ```{r}
 normalized_counts <- as.data.frame(normalized_counts)
 ens_all <- rownames(normalized_counts) #ens includes only the significant genes (by thresholding)
@@ -320,8 +325,7 @@ normalized_counts<- normalized_counts%>% distinct(symbol, .keep_all = TRUE)
 
 
 
-STEP - 2 create the first column (=gene name) ; and second column (=gene description)
-
+#STEP - 2 create the first column (=gene name) ; and second column (=gene description)
 ```{r}
 normalized_counts$description <- rownames(normalized_counts)
 normalized_counts$gene_name <- normalized_counts$symbol
@@ -336,6 +340,73 @@ fid <- "norm_counts.gct"
 writeLines(c("#1.2", paste(nrow(norm_counts), ncol(norm_counts) - 2, collapse="\t")), fid, sep="\n") 
 write.table(norm_counts, file=fid, quote=FALSE, row.names=FALSE, col.names=TRUE, sep="\t", append = TRUE)
 ```
+
+##Trying Clusterprofiler
+Clusterpofiler is a package on bioconductor that supports both ORA and FCS (ie GSEA) analyses. The benefit of performing GSEA with clusterprofiler rather than on the GSEA desktop is that clusterprofiler enables different ways of visualizing the data. Following the YuLab pipeline for GSEA (http://yulab-smu.top/biomedical-knowledge-mining-book/faq.html#genelist)
+
+#Step 1. Create a genelist with 2 columns (gene ID, FC), sorted in decreasing order
+```{r}
+#map gene symbols to res (which contains log2FC)
+res.df <- as.data.frame(res)
+
+res.df$symbol <- mapIds(org.Hs.eg.db, 
+                     keys=ens_all, 
+                     column=c("SYMBOL"), 
+                     keytype="ENSEMBL",multiVals="first")
+
+#remove NA and duplicates
+res.df <- na.omit(res.df) 
+res.df<- res.df%>% distinct(symbol, .keep_all = TRUE)
+
+##feature 1: numeric vector
+geneList = res.df[,2]
+
+##feature 2: named vector 
+names(geneList) = as.character(res.df[,7])
+
+##feature 3: decreasing order
+geneList = sort(geneList, decreasing = T)
+```
+
+
+#Step 2 - MSigDb GSEA
+```{r}
+install.packages("msigdbr")
+library(msigdbr)
+msigdbr_show_species()
+
+
+C7_t2g <- msigdbr(species = "Homo sapiens", category = "C7") %>% 
+  dplyr::select(gs_name, gene_symbol)
+head(C7_t2g)
+
+em <- GSEA(geneList, TERM2GENE = C7_t2g)
+head(em)
+
+em.df <- as.data.frame(em)
+
+
+```
+
+#Biological theme comparison
+```{r}
+library(enrichplot)
+barplot(em)
+
+dotplot(em)
+gseaplot(em, geneSetID = 1)
+
+```
+
+
+
+
+
+
+
+
+
+
 
 
 
